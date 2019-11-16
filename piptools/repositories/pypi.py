@@ -10,12 +10,15 @@ from shutil import rmtree
 
 from .._compat import (
     FAVORITE_HASH,
+    PIP_VERSION,
     Link,
     PyPI,
     RequirementSet,
+    RequirementTracker,
     Resolver as PipResolver,
     TemporaryDirectory,
     Wheel,
+    WheelCache,
     contextlib,
     is_dir_url,
     is_file_url,
@@ -36,22 +39,6 @@ from ..utils import (
     make_install_requirement,
 )
 from .base import BaseRepository
-
-from piptools._compat.pip_compat import PIP_VERSION
-
-try:
-    from pip._internal.req.req_tracker import RequirementTracker
-except ImportError:
-
-    @contextmanager
-    def RequirementTracker():
-        yield
-
-
-try:
-    from pip._internal.cache import WheelCache
-except ImportError:
-    from pip.wheel import WheelCache
 
 FILE_CHUNK_SIZE = 4096
 FileStream = collections.namedtuple("FileStream", "stream size")
@@ -218,6 +205,10 @@ class PyPIRepository(BaseRepository):
                 )
                 resolver_kwargs["make_install_req"] = make_install_req
 
+            if PIP_VERSION >= (19, 4):
+                preparer_kwargs["session"] = self.session
+                del resolver_kwargs["session"]
+
             resolver = None
             preparer = None
             with RequirementTracker() as req_tracker:
@@ -229,9 +220,15 @@ class PyPIRepository(BaseRepository):
                 reqset = RequirementSet()
                 ireq.is_direct = True
                 reqset.add_requirement(ireq)
+
                 resolver = PipResolver(**resolver_kwargs)
-                resolver.require_hashes = False
-                results = resolver._resolve_one(reqset, ireq)
+                require_hashes = False
+                if PIP_VERSION < (19, 4):
+                    resolver.require_hashes = require_hashes
+                    results = resolver._resolve_one(reqset, ireq)
+                else:
+                    results = resolver._resolve_one(reqset, ireq, require_hashes)
+
                 reqset.cleanup_files()
 
         return set(results)
